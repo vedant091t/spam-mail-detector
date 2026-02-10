@@ -7,6 +7,7 @@ Run this to ensure everything is properly configured
 import os
 import sys
 from pathlib import Path
+import importlib.metadata
 
 class Colors:
     """ANSI color codes for terminal output"""
@@ -27,6 +28,22 @@ def check(condition, message, critical=False):
         print(f"{marker} {message}")
         return False
 
+def get_package_version(package_name):
+    """Get installed package version"""
+    try:
+        return importlib.metadata.version(package_name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+def compare_versions(installed, required):
+    """Check if installed version meets requirement"""
+    try:
+        installed_parts = [int(x) for x in installed.split('.')[:3]]
+        required_parts = [int(x) for x in required.split('.')[:3]]
+        return installed_parts >= required_parts
+    except:
+        return True
+
 def main():
     """Main validation function"""
     print(f"\n{Colors.BOLD}{'='*70}")
@@ -40,27 +57,35 @@ def main():
     failed = 0
     warnings = 0
     
-    # Section 1: Python Environment
     print(f"{Colors.BLUE}[1] Python Environment{Colors.RESET}")
     if check(sys.version_info >= (3, 8), f"Python version {sys.version_info.major}.{sys.version_info.minor} >= 3.8", critical=True):
         passed += 1
     else:
         failed += 1
     
-    # Check dependencies
-    try:
-        import pandas
-        import numpy
-        import sklearn
-        import nltk
-        check(True, "All required packages installed")
-        passed += 1
-    except ImportError as e:
-        check(False, f"Missing package: {e}", critical=True)
-        failed += 1
+    required_packages = {
+        'pandas': '2.0.0',
+        'numpy': '1.20.0',
+        'scikit-learn': '1.0.0',
+        'nltk': '3.6.0'
+    }
+    
+    for package, min_version in required_packages.items():
+        installed_version = get_package_version(package)
+        if installed_version:
+            version_ok = compare_versions(installed_version, min_version)
+            if check(version_ok, f"{package} {installed_version} (>= {min_version})"):
+                passed += 1
+            else:
+                warnings += 1
+                print(f"  {Colors.YELLOW}Consider updating: pip install --upgrade {package}{Colors.RESET}")
+        else:
+            if check(False, f"{package} not installed", critical=True):
+                passed += 1
+            else:
+                failed += 1
     print()
     
-    # Section 2: Project Structure
     print(f"{Colors.BLUE}[2] Project Structure{Colors.RESET}")
     
     required_files = [
@@ -82,7 +107,6 @@ def main():
             failed += 1
     print()
     
-    # Section 3: Directories
     print(f"{Colors.BLUE}[3] Required Directories{Colors.RESET}")
     
     required_dirs = [
@@ -99,7 +123,6 @@ def main():
             failed += 1
     print()
     
-    # Section 4: Source Files
     print(f"{Colors.BLUE}[4] Source Code Modules{Colors.RESET}")
     
     src_files = [
@@ -120,13 +143,12 @@ def main():
             warnings += 1
     print()
     
-    # Section 5: Datasets
     print(f"{Colors.BLUE}[5] Datasets{Colors.RESET}")
     
     data_files = [
-        ('data/spam_sms.csv', True),  # Critical
-        ('data/spam.csv', False),      # Optional
-        ('data/emails.csv', False),    # Optional
+        ('data/spam_sms.csv', True),
+        ('data/spam.csv', False),
+        ('data/emails.csv', False),
     ]
     
     for file, critical in data_files:
@@ -139,7 +161,6 @@ def main():
                 warnings += 1
     print()
     
-    # Section 6: Trained Models
     print(f"{Colors.BLUE}[6] Trained Models{Colors.RESET}")
     
     model_files = [
@@ -159,7 +180,6 @@ def main():
         print(f"  {Colors.YELLOW}💡 Tip: Run 'python src/train_sms.py' to train the model{Colors.RESET}")
     print()
     
-    # Section 7: NLTK Data
     print(f"{Colors.BLUE}[7] NLTK Data{Colors.RESET}")
     
     try:
@@ -174,7 +194,6 @@ def main():
         print(f"  {Colors.YELLOW}💡 Tip: Run 'python -c \"import nltk; nltk.download('punkt'); nltk.download('stopwords')\"'{Colors.RESET}")
     print()
     
-    # Section 8: Documentation
     print(f"{Colors.BLUE}[8] Documentation Completeness{Colors.RESET}")
     
     readme_path = project_root / 'README.md'
@@ -191,7 +210,6 @@ def main():
         failed += 1
     print()
     
-    # Section 9: Test Executable Scripts
     print(f"{Colors.BLUE}[9] Script Executability{Colors.RESET}")
     
     scripts_to_test = [
@@ -204,7 +222,6 @@ def main():
     for script in scripts_to_test:
         script_path = project_root / script
         if script_path.exists():
-            # Check if file has proper Python shebang or is a .py file
             is_executable = script.endswith('.py')
             if check(is_executable, f"Script is valid Python: {script}"):
                 passed += 1
@@ -214,7 +231,6 @@ def main():
             warnings += 1
     print()
     
-    # Final Summary
     print(f"\n{Colors.BOLD}{'='*70}")
     print(f"  VALIDATION SUMMARY")
     print(f"{'='*70}{Colors.RESET}")

@@ -10,6 +10,7 @@ Usage:
     python predict.py "Your message here"                 # Single prediction
     python predict.py --interactive                       # Interactive mode
     python predict.py --file messages.txt                 # Batch from file
+    python predict.py --json "message"                    # JSON output
     python predict.py --help                              # Show help
 
 Author: Vedant Tandel
@@ -19,9 +20,9 @@ import os
 import sys
 import pickle
 import argparse
+import json as json_module
 from pathlib import Path
 
-# Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 try:
@@ -76,6 +77,7 @@ class SpamPredictor:
             
         except Exception as e:
             print(f"Error loading model: {e}")
+            print("The model files might be corrupted. Try retraining.")
             sys.exit(1)
     
     def predict(self, message):
@@ -92,40 +94,51 @@ class SpamPredictor:
         if not message or not message.strip():
             return None, 0.0
         
-        # Preprocess the message
-        cleaned_message = clean_text(message)
-        
-        # Transform to TF-IDF features
-        message_tfidf = self.vectorizer.transform([cleaned_message])
-        
-        # Make prediction
-        prediction = self.classifier.predict(message_tfidf)[0]
-        
-        # Get confidence score
-        probabilities = self.classifier.predict_proba(message_tfidf)[0]
-        confidence = max(probabilities)
-        
-        return prediction, confidence
+        try:
+            cleaned_message = clean_text(message)
+            message_tfidf = self.vectorizer.transform([cleaned_message])
+            prediction = self.classifier.predict(message_tfidf)[0]
+            probabilities = self.classifier.predict_proba(message_tfidf)[0]
+            confidence = max(probabilities)
+            
+            return prediction, confidence
+        except Exception as e:
+            print(f"Error during prediction: {e}", file=sys.stderr)
+            return None, 0.0
     
-    def predict_and_display(self, message, show_message=True):
+    def predict_and_display(self, message, show_message=True, json_output=False):
         """
         Predict and display result in a user-friendly format.
         
         Args:
             message (str): The message to classify
             show_message (bool): Whether to display the input message
+            json_output (bool): Output in JSON format
         """
-        if show_message:
-            print(f"Message: {message[:80]}{'...' if len(message) > 80 else ''}")
-        
         prediction, confidence = self.predict(message)
         
         if prediction is None:
-            print("Error: Empty message\n")
+            if json_output:
+                print(json_module.dumps({"error": "Empty or invalid message"}))
+            else:
+                print("Error: Empty message\n")
             return
         
-        # Format output
         confidence_pct = confidence * 100
+        
+        if json_output:
+            result = {
+                "message": message[:100],
+                "prediction": prediction,
+                "confidence": round(confidence_pct, 2),
+                "is_spam": prediction == 'spam'
+            }
+            print(json_module.dumps(result))
+            return
+        
+        if show_message:
+            print(f"Message: {message[:80]}{'...' if len(message) > 80 else ''}")
+        
         result = prediction.upper()
         
         if prediction == 'spam':
@@ -139,9 +152,9 @@ class SpamPredictor:
         print()
 
 
-def predict_single(predictor, message):
+def predict_single(predictor, message, json_output=False):
     """Predict a single message."""
-    predictor.predict_and_display(message)
+    predictor.predict_and_display(message, json_output=json_output)
 
 
 def predict_interactive(predictor):
@@ -174,7 +187,7 @@ def predict_interactive(predictor):
             print(f"Error: {e}\n")
 
 
-def predict_batch(predictor, file_path):
+def predict_batch(predictor, file_path, json_output=False):
     """Predict messages from a file (one per line)."""
     file_path = Path(file_path)
     
@@ -182,38 +195,54 @@ def predict_batch(predictor, file_path):
         print(f"Error: File not found: {file_path}")
         sys.exit(1)
     
-    print(f"Processing messages from: {file_path}\n")
-    print("="*70)
-    
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
-            messages = f.readlines()
-        
-        spam_count = 0
-        ham_count = 0
-        
-        for i, message in enumerate(messages, 1):
-            message = message.strip()
-            if not message:
-                continue
-            
-            print(f"\n[{i}] ", end="")
-            prediction, confidence = predictor.predict(message)
-            
-            if prediction == 'spam':
-                spam_count += 1
-            else:
-                ham_count += 1
-            
-            predictor.predict_and_display(message)
-        
-        print("="*70)
-        print(f"SUMMARY: {spam_count} SPAM, {ham_count} HAM")
-        print("="*70)
-        
+            messages = [line.strip() for line in f if line.strip()]
+    except UnicodeDecodeError:
+        try:
+            with open(file_path, 'r', encoding='latin-1') as f:
+                messages = [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            sys.exit(1)
     except Exception as e:
         print(f"Error reading file: {e}")
         sys.exit(1)
+    
+    if json_output:
+        results = []
+        for message in messages:
+            prediction, confidence = predictor.predict(message)
+            if prediction:
+                results.append({
+                    "message": message[:100],
+                    "prediction": prediction,
+                    "confidence": round(confidence * 100, 2),
+                    "is_spam": prediction == 'spam'
+                })
+        print(json_module.dumps(results, indent=2))
+        return
+    
+    print(f"Processing messages from: {file_path}\n")
+    print("="*70)
+    
+    spam_count = 0
+    ham_count = 0
+    
+    for i, message in enumerate(messages, 1):
+        print(f"\n[{i}] ", end="")
+        prediction, confidence = predictor.predict(message)
+        
+        if prediction == 'spam':
+            spam_count += 1
+        else:
+            ham_count += 1
+        
+        predictor.predict_and_display(message)
+    
+    print("="*70)
+    print(f"SUMMARY: {spam_count} SPAM, {ham_count} HAM")
+    print("="*70)
 
 
 def main():
@@ -226,6 +255,7 @@ Examples:
   python predict.py "Congratulations! You won a prize!"
   python predict.py --interactive
   python predict.py --file messages.txt
+  python predict.py --json "Check this message"
 
 The tool uses a Naive Bayes classifier trained on SMS spam data
 with 97.76% accuracy, 100% precision, and 83.33% recall.
@@ -251,6 +281,12 @@ with 97.76% accuracy, 100% precision, and 83.33% recall.
     )
     
     parser.add_argument(
+        '-j', '--json',
+        action='store_true',
+        help='Output results in JSON format'
+    )
+    
+    parser.add_argument(
         '-m', '--model-dir',
         type=str,
         default='models',
@@ -259,19 +295,18 @@ with 97.76% accuracy, 100% precision, and 83.33% recall.
     
     args = parser.parse_args()
     
-    # Ensure NLTK data is available
     download_nltk_data()
     
-    # Initialize predictor
     predictor = SpamPredictor(model_dir=args.model_dir)
     
-    # Determine mode and execute
     if args.interactive:
+        if args.json:
+            print("Warning: JSON output not supported in interactive mode")
         predict_interactive(predictor)
     elif args.file:
-        predict_batch(predictor, args.file)
+        predict_batch(predictor, args.file, json_output=args.json)
     elif args.message:
-        predict_single(predictor, args.message)
+        predict_single(predictor, args.message, json_output=args.json)
     else:
         parser.print_help()
         print("\nError: Please provide a message, use --interactive, or specify --file")
